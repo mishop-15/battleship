@@ -13,6 +13,8 @@ export default function GamePage() {
   const [enemyBoard, setEnemyBoard] = useState<CellState[][]>(createEmptyBoard());
 
   const socketRef = useRef<WebSocket | null>(null);
+  const HTTP_URL = process.env.NEXT_PUBLIC_BACKEND_HTTP || "http://localhost:3000";
+  const WS_URL = process.env.NEXT_PUBLIC_BACKEND_WS || "ws://localhost:3000";
 
   const startBotGame = async () => {
     if (socketRef.current) {
@@ -26,7 +28,7 @@ export default function GamePage() {
     setStatus("Connecting...");
 
     try {
-      const res = await fetch("http://localhost:3000/create_game", { method: "POST" });
+      const res = await fetch(`${HTTP_URL}/create_game`, { method: "POST" });
       const data = await res.json();
       setGameId(data.game_id);
       connectToWebsocket(data.game_id);
@@ -39,7 +41,7 @@ export default function GamePage() {
   const connectToWebsocket = (id: string) => {
     if (socketRef.current) return;
 
-    const ws = new WebSocket(`ws://localhost:3000/ws/${id}`);
+    const ws = new WebSocket(`${WS_URL}/ws/${id}`);
     
     ws.onopen = () => setStatus("Battle Active");
     
