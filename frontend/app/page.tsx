@@ -11,6 +11,7 @@ export default function GamePage() {
   
   const [myBoard, setMyBoard] = useState<CellState[][]>(createEmptyBoard());
   const [enemyBoard, setEnemyBoard] = useState<CellState[][]>(createEmptyBoard());
+  const [difficulty, setDifficulty] = useState("Easy");
 
   const socketRef = useRef<WebSocket | null>(null);
   const HTTP_URL = process.env.NEXT_PUBLIC_BACKEND_HTTP || "http://localhost:3000";
@@ -28,7 +29,11 @@ export default function GamePage() {
     setStatus("Connecting...");
 
     try {
-      const res = await fetch(`${HTTP_URL}/create_game`, { method: "POST" });
+      const res = await fetch(`${HTTP_URL}/create_game`, { 
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ difficulty: difficulty }) 
+      });
       const data = await res.json();
       setGameId(data.game_id);
       connectToWebsocket(data.game_id);
@@ -42,9 +47,7 @@ export default function GamePage() {
     if (socketRef.current) return;
 
     const ws = new WebSocket(`${WS_URL}/ws/${id}`);
-    
     ws.onopen = () => setStatus("Battle Active");
-    
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
 
@@ -75,7 +78,7 @@ export default function GamePage() {
 
         if (winner) {
             setWinner(winner);
-            setStatus(`Winner: ${winner}`);
+            setStatus(winner === "User" ? "VICTORY" : "DEFEAT");
             ws.close();
             socketRef.current = null;
         }
@@ -102,21 +105,57 @@ export default function GamePage() {
                 </div>
             ) : (
                 <>
-                    <div className="bg-slate-800 p-6 rounded border border-slate-600 mb-8 w-full">
+                    {/* MISSION BRIEFING BOX (UNCHANGED) */}
+                    <div className="bg-slate-800 p-6 rounded border border-slate-600 mb-6 w-full shadow-xl">
                         <h2 className="text-xl text-yellow-500 mb-4 border-b border-slate-600 pb-2">
                              MISSION BRIEFING
                         </h2>
                         <ul className="space-y-2 text-gray-300 text-sm">
                             <li><strong className="text-white">Objective:</strong> Destroy the enemy fleet.</li>
                             <li><strong className="text-white">The Fleet:</strong> 5 Ships (Size 5, 4, 3, 3, 2).</li>
-                            <li><strong className="text-white">Win Condition:</strong> First to land <strong>5 Hits</strong> wins.</li>
+                            <li><strong className="text-white">Win Condition:</strong> First to land <strong>7 Hits</strong> wins.</li>
                             <li className="text-xs text-gray-500 italic mt-2">* Rapid-fire drill mode active.</li>
                         </ul>
                     </div>
 
+                    {/* --- NEW: DIFFICULTY BUTTONS (INSERTED HERE) --- */}
+                    <div className="flex gap-4 mb-6">
+                        <button
+                            onClick={() => setDifficulty("Easy")}
+                            className={`px-4 py-2 rounded font-bold transition-transform ${
+                                difficulty === "Easy" 
+                                ? "bg-green-600 text-white scale-110 shadow-[0_0_10px_rgba(34,197,94,0.5)]" 
+                                : "bg-slate-700 text-green-500 border border-green-900 hover:bg-slate-600"
+                            }`}
+                        >
+                            EASY
+                        </button>
+                        <button
+                            onClick={() => setDifficulty("Medium")}
+                            className={`px-4 py-2 rounded font-bold transition-transform ${
+                                difficulty === "Medium" 
+                                ? "bg-yellow-500 text-black scale-110 shadow-[0_0_10px_rgba(234,179,8,0.5)]" 
+                                : "bg-slate-700 text-yellow-500 border border-yellow-900 hover:bg-slate-600"
+                            }`}
+                        >
+                            MEDIUM
+                        </button>
+                        <button
+                            onClick={() => setDifficulty("Hard")}
+                            className={`px-4 py-2 rounded font-bold transition-transform ${
+                                difficulty === "Hard" 
+                                ? "bg-red-600 text-white scale-110 shadow-[0_0_10px_rgba(220,38,38,0.5)]" 
+                                : "bg-slate-700 text-red-500 border border-red-900 hover:bg-slate-600"
+                            }`}
+                        >
+                            HARD
+                        </button>
+                    </div>
+                    {/* ----------------------------------------------- */}
+
                     <button 
                         onClick={startBotGame} 
-                        className="px-8 py-3 bg-blue-700 hover:bg-blue-600 rounded font-bold text-lg transition"
+                        className="px-8 py-3 bg-blue-700 hover:bg-blue-600 rounded font-bold text-lg transition shadow-lg w-full md:w-auto"
                     >
                         DEPLOY FLEET
                     </button>
@@ -146,6 +185,7 @@ export default function GamePage() {
             <div className="flex flex-col md:flex-row gap-12 justify-center">
                 <div>
                     <h2 className="text-lg mb-2 text-center text-blue-300">Your Sector</h2>
+                    {/* ORIGINAL BOARD UI PRESERVED */}
                     <div className="grid grid-cols-10 gap-1 bg-slate-800 p-2 rounded border border-blue-900">
                     {myBoard.map((row, r) => row.map((cell, c) => (
                         <div
@@ -163,6 +203,7 @@ export default function GamePage() {
                 </div>
                 <div className={winner ? "opacity-50 pointer-events-none grayscale" : ""}>
                     <h2 className="text-lg mb-2 text-center text-red-300">Enemy Sector</h2>
+                    {/* ORIGINAL BOARD UI PRESERVED */}
                     <div className="grid grid-cols-10 gap-1 bg-slate-800 p-2 rounded border border-red-900">
                     {enemyBoard.map((row, r) => row.map((cell, c) => (
                         <div

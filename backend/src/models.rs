@@ -117,18 +117,35 @@ impl Player {
     pub fn process_bot_move_result(&mut self, coords: (usize, usize), result: CellState) {
         if let Some(state) = &mut self.bot_state {
             if state.difficulty != Difficulty::Easy && result == CellState::Hit {
-                state.last_hit = Some(coords);
-                
                 let (r, c) = coords;
+                let mut is_horizontal = false;
+                let mut is_vertical = false;
+                if let Some((lr, lc)) = state.last_hit {
+                    let dr = (r as isize - lr as isize).abs();
+                    let dc = (c as isize - lc as isize).abs();
+
+                    if dr + dc == 1 {
+                        if r == lr { is_horizontal = true; } 
+                        if c == lc { is_vertical = true; }   
+                    }
+                }
+                if is_horizontal {
+                    state.target_queue.retain(|&(qr, _)| qr == r);
+                } else if is_vertical {
+                    state.target_queue.retain(|&(_, qc)| qc == c);
+                }
+                state.last_hit = Some(coords);
                 let mut moves = Vec::new();
-                
                 if r > 0 { moves.push((r - 1, c)); } 
                 if r < 9 { moves.push((r + 1, c)); } 
                 if c > 0 { moves.push((r, c - 1)); } 
                 if c < 9 { moves.push((r, c + 1)); } 
+
                 for m in moves {
                     if !state.shots_fired.contains(&m) {
-                        state.target_queue.push_back(m);
+                        if is_horizontal && m.0 != r { continue; }
+                        if is_vertical && m.1 != c { continue; }
+                        state.target_queue.push_front(m);
                     }
                 }
             }
@@ -247,12 +264,13 @@ impl Game {
     }
     pub fn make_move(&mut self, player_id: String, target: (usize, usize)) -> Result<(CellState, Option<String>), String> {
         let opponent = if player_id == self.player_1.id {
-             self.player_2.as_mut().ok_or("No P2")?
+             self.player_2.as_mut().ok_or("Player 2 missing")?
         } else {
              &mut self.player_1
         };
         let result = opponent.receive_shot(target)?;
-        if opponent.remaining_health == 0 {
+        let hits_made = 17 - opponent.remaining_health;
+        if hits_made >= 7 {
             self.status = GameStatus::Finished;
             self.winner = Some(player_id.clone());
             return Ok((result, Some(player_id)));
