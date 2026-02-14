@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use rand::Rng;
+use std::collections::{HashSet, VecDeque};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Copy)]
 pub enum Direction {
@@ -14,6 +15,29 @@ pub enum CellState {
     Hit,
     Miss,
     Ship,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum Difficulty {
+    Easy,
+    Medium,
+    Hard
+}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BotState {
+    pub difficulty: Difficulty,
+    pub shots_fired: HashSet<(usize, usize)>,
+    pub last_hit: Option<(usize, usize)>,
+    pub target_queue: VecDeque<(usize, usize)>,
+}
+impl BotState {
+    pub fn new(difficulty: Difficulty) -> Self {
+        Self {
+            difficulty,
+            shots_fired: HashSet::new(),
+            last_hit: None,
+            target_queue: VecDeque::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,20 +55,84 @@ pub struct Player {
     pub is_bot: bool,
     pub board: [[CellState; 10]; 10],
     pub ships: Vec<Ship>,
-    pub remaining_health: u8, 
+    pub remaining_health: u8,
+    pub bot_state: Option<BotState>,
 }
 
 impl Player {
-    pub fn new(id: String, is_bot: bool) -> Self {
+    pub fn new(id: String, is_bot: bool, difficulty: Difficulty) -> Self {
+        let bot_state = if is_bot {
+            Some(BotState::new(difficulty)) 
+        } else {
+            None
+        };
         let mut player = Self { 
             id, 
             is_bot, 
             board: [[CellState::Empty; 10]; 10], 
             ships: Vec::new(),
-            remaining_health: 17, 
+            remaining_health: 17,
+            bot_state,
         };
         player.place_random_ships();
         player
+    }
+    pub fn get_bot_move(&mut self) -> (usize, usize) {
+        if let Some(state) = &mut self.bot_state {
+            while let Some(target) = state.target_queue.pop_front() {
+                if !state.shots_fired.contains(&target) {
+                    state.shots_fired.insert(target);
+                    return target;
+                }
+            }
+            let mut rng = rand::thread_rng();
+            loop {
+                let r = rng.gen_range(0..10);
+                let c = rng.gen_range(0..10);
+
+                if !state.shots_fired.contains(&(r, c)) {
+                    match state.difficulty {
+                        Difficulty::Easy => {
+                            state.shots_fired.insert((r, c));
+                            return (r, c);
+                        },
+                        Difficulty::Medium => {
+                            state.shots_fired.insert((r, c));
+                            return (r, c);
+                        },
+                        Difficulty::Hard => {
+                            if (r + c) % 2 == 0 {
+                                state.shots_fired.insert((r, c));
+                                return (r, c);
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            (0, 0)
+        }
+    }
+
+    pub fn process_bot_move_result(&mut self, coords: (usize, usize), result: CellState) {
+        if let Some(state) = &mut self.bot_state {
+            if state.difficulty != Difficulty::Easy && result == CellState::Hit {
+                state.last_hit = Some(coords);
+                
+                let (r, c) = coords;
+                let mut moves = Vec::new();
+                
+                if r > 0 { moves.push((r - 1, c)); } 
+                if r < 9 { moves.push((r + 1, c)); } 
+                if c > 0 { moves.push((r, c - 1)); } 
+                if c < 9 { moves.push((r, c + 1)); } 
+                for m in moves {
+                    if !state.shots_fired.contains(&m) {
+                        state.target_queue.push_back(m);
+                    }
+                }
+            }
+        }
     }
 
     pub fn place_random_ships(&mut self) {
@@ -159,20 +247,16 @@ impl Game {
     }
     pub fn make_move(&mut self, player_id: String, target: (usize, usize)) -> Result<(CellState, Option<String>), String> {
         let opponent = if player_id == self.player_1.id {
-             self.player_2.as_mut().ok_or("Player 2 missing")?
+             self.player_2.as_mut().ok_or("No P2")?
         } else {
              &mut self.player_1
         };
         let result = opponent.receive_shot(target)?;
-        let hits_made = 17 - opponent.remaining_health; 
-        let winner = if hits_made >= 5 {  
+        if opponent.remaining_health == 0 {
             self.status = GameStatus::Finished;
             self.winner = Some(player_id.clone());
-            Some(player_id)
-        } else {
-            None
-        };
-
-        Ok((result, winner))
+            return Ok((result, Some(player_id)));
+        }
+        Ok((result, None))
     }
 }

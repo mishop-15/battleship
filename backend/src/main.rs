@@ -6,12 +6,13 @@ use axum::{
 };
 use std::{collections::HashMap, sync::{Arc, Mutex}};
 use std::net::SocketAddr;
+use serde::Deserialize;
 use serde_json::{json, Value};
 use tower_http::cors::{Any, CorsLayer};
 use rand::Rng; 
 
 mod models;
-use models::{Game, Player};
+use models::{Game, Player, Difficulty};
 
 type GameStore = Arc<Mutex<HashMap<String, Game>>>;
 
@@ -42,20 +43,27 @@ async fn main() {
 }
 
 async fn health_check() -> &'static str { "Battleship Server Running" }
+#[derive(Deserialize)]
+struct CreateGameRequest {
+    difficulty: Option<String>,
+}
 
-async fn create_game_handler(State(state): State<AppState>) -> Json<Value> {
-    let player_1 = Player::new("User".to_string(), false);
+async fn create_game_handler(State(state): State<AppState>, Json(payload): Json<CreateGameRequest>,) -> Json<Value> {
+    let diff_str = payload.difficulty.unwrap_or("Medium".to_string());
+    let difficulty = match diff_str.as_str() {
+        "Easy" => Difficulty::Easy,
+        "Hard" => Difficulty::Hard,
+        _ => Difficulty::Medium,
+    };
+    let player_1 = Player::new("User".to_string(), false, Difficulty::Easy);
+    let bot = Player::new("Bot".to_string(), true, difficulty);
     let mut new_game = Game::new(player_1);
-    let bot = Player::new("Bot".to_string(), true);
     let _ = new_game.join_game(bot);
-
     let game_id = new_game.id.clone();
-    
     {
         let mut games = state.games.lock().unwrap();
         games.insert(game_id.clone(), new_game);
     }
-
     Json(json!({ "status": "created", "game_id": game_id }))
 }
 
@@ -75,6 +83,7 @@ async fn handle_game_socket(mut socket: WebSocket, game_id: String, state: AppSt
         } else { None }
     };
     if let Some(msg) = init_msg { let _ = socket.send(Message::Text(msg)).await; }
+    
     while let Some(Ok(msg)) = socket.recv().await {
         if let Message::Text(text) = msg {
             let parts: Vec<&str> = text.split(',').collect();
@@ -84,25 +93,27 @@ async fn handle_game_socket(mut socket: WebSocket, game_id: String, state: AppSt
             let response = {
                 let mut games = state.games.lock().unwrap();
                 if let Some(game) = games.get_mut(&game_id) {
-                    
                     match game.make_move(my_id.clone(), (r, c)) {
                         Ok((user_res, winner)) => {
                             let mut bot_data = None;
                             if winner.is_none() {
-                                let mut rng = rand::thread_rng();
-                                let mut bot_r = rng.gen_range(0..10);
-                                let mut bot_c = rng.gen_range(0..10);
-                                
-                                for _ in 0..10 {
-                                    if let Ok((b_res, b_win)) = game.make_move("Bot".to_string(), (bot_r, bot_c)) {
-                                        bot_data = Some((bot_r, bot_c, b_res, b_win));
-                                        break;
+                                let bot_move_coords = if let Some(bot_player) = game.player_2.as_mut() {
+                                    Some(bot_player.get_bot_move())
+                                } else {
+                                    None
+                                };
+                                if let Some((bot_r, bot_c)) = bot_move_coords {
+                                    match game.make_move("Bot".to_string(), (bot_r, bot_c)) {
+                                        Ok((b_res, b_win)) => {
+                                            if let Some(bot_player) = game.player_2.as_mut() {
+                                                bot_player.process_bot_move_result((bot_r, bot_c), b_res);
+                                            }
+                                            bot_data = Some((bot_r, bot_c, b_res, b_win));
+                                        },
+                                        Err(_) => {} 
                                     }
-                                    bot_r = rng.gen_range(0..10);
-                                    bot_c = rng.gen_range(0..10);
                                 }
                             }
-
                             Some(json!({
                                 "status": "success",
                                 "turn_update": {
@@ -125,7 +136,6 @@ async fn handle_game_socket(mut socket: WebSocket, game_id: String, state: AppSt
                     None 
                 }
             };
-
             if let Some(resp) = response {
                 let _ = socket.send(Message::Text(resp.to_string())).await;
             }
