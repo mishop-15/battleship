@@ -166,12 +166,21 @@ export default function GamePage() {
       {gameId && (
         <div className="flex flex-col items-center gap-8 w-full max-w-5xl">
             <div className="flex items-center justify-between w-full bg-slate-800 p-3 rounded border border-slate-700">
-                <div className={`px-4 py-1 rounded font-bold text-sm uppercase tracking-wider
-                    ${winner === "User" ? "bg-green-700 text-white" : ""}
-                    ${winner === "Bot" ? "bg-red-700 text-white" : ""}
-                    ${!winner ? "text-blue-200" : ""}
-                `}>
-                    STATUS: {winner ? `${winner} VICTORY` : status}
+                <div className="flex gap-4">
+                    <div className={`px-4 py-1 rounded font-bold text-sm uppercase tracking-wider
+                        ${winner === "User" ? "bg-green-700 text-white" : ""}
+                        ${winner === "Bot" ? "bg-red-700 text-white" : ""}
+                        ${!winner ? "text-blue-200" : ""}
+                    `}>
+                        {winner ? `${winner} VICTORY` : status}
+                    </div>
+                    <div className={`px-4 py-1 rounded font-bold text-sm uppercase tracking-wider border hidden md:block
+                        ${difficulty === "Easy" ? "bg-green-900/30 text-green-400 border-green-800" : ""}
+                        ${difficulty === "Medium" ? "bg-yellow-900/30 text-yellow-400 border-yellow-800" : ""}
+                        ${difficulty === "Hard" ? "bg-red-900/30 text-red-400 border-red-800" : ""}
+                    `}>
+                        INTEL: {difficulty}
+                    </div>
                 </div>
                 
                 <button 
@@ -181,11 +190,9 @@ export default function GamePage() {
                     {winner ? "NEW MISSION" : "RESTART"}
                 </button>
             </div>
-
             <div className="flex flex-col md:flex-row gap-12 justify-center">
                 <div>
                     <h2 className="text-lg mb-2 text-center text-blue-300">Your Sector</h2>
-                    {/* ORIGINAL BOARD UI PRESERVED */}
                     <div className="grid grid-cols-10 gap-1 bg-slate-800 p-2 rounded border border-blue-900">
                     {myBoard.map((row, r) => row.map((cell, c) => (
                         <div
@@ -203,7 +210,6 @@ export default function GamePage() {
                 </div>
                 <div className={winner ? "opacity-50 pointer-events-none grayscale" : ""}>
                     <h2 className="text-lg mb-2 text-center text-red-300">Enemy Sector</h2>
-                    {/* ORIGINAL BOARD UI PRESERVED */}
                     <div className="grid grid-cols-10 gap-1 bg-slate-800 p-2 rounded border border-red-900">
                     {enemyBoard.map((row, r) => row.map((cell, c) => (
                         <div

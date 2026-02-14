@@ -123,7 +123,6 @@ impl Player {
                 if let Some((lr, lc)) = state.last_hit {
                     let dr = (r as isize - lr as isize).abs();
                     let dc = (c as isize - lc as isize).abs();
-
                     if dr + dc == 1 {
                         if r == lr { is_horizontal = true; } 
                         if c == lc { is_vertical = true; }   
@@ -218,7 +217,7 @@ impl Player {
                 Ok(CellState::Hit)
             }
             CellState::Hit | CellState::Miss => {
-                Err("Already fired here!".to_string())
+                Err("already fired here!".to_string())
             }
         }   
     }
