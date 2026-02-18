@@ -9,7 +9,6 @@ use std::net::SocketAddr;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tower_http::cors::{Any, CorsLayer};
-use rand::Rng; 
 
 mod models;
 use models::{Game, Player, Difficulty};
@@ -26,8 +25,10 @@ async fn main() {
     let state = AppState {
         games: Arc::new(Mutex::new(HashMap::new())),
     };
-
-    let cors = CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any);
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
 
     let app = Router::new()
         .route("/", get(health_check))
@@ -37,37 +38,51 @@ async fn main() {
         .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
-    println!("Listening on {}", addr);
+    println!("Battleship Backend listening on {}", addr);
+    
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
 
 async fn health_check() -> &'static str { "Battleship Server Running" }
+
 #[derive(Deserialize)]
 struct CreateGameRequest {
     difficulty: Option<String>,
 }
 
-async fn create_game_handler(State(state): State<AppState>, Json(payload): Json<CreateGameRequest>,) -> Json<Value> {
-    let diff_str = payload.difficulty.unwrap_or("Medium".to_string());
+async fn create_game_handler(
+    State(state): State<AppState>, 
+    Json(payload): Json<CreateGameRequest>,
+) -> Json<Value> {
+    // Defaulting to "Easy" as requested
+    let diff_str = payload.difficulty.unwrap_or_else(|| "Easy".to_string());
     let difficulty = match diff_str.as_str() {
-        "Easy" => Difficulty::Easy,
+        "Medium" => Difficulty::Medium,
         "Hard" => Difficulty::Hard,
-        _ => Difficulty::Medium,
+        _ => Difficulty::Easy,
     };
+
     let player_1 = Player::new("User".to_string(), false, Difficulty::Easy);
     let bot = Player::new("Bot".to_string(), true, difficulty);
+    
     let mut new_game = Game::new(player_1);
     let _ = new_game.join_game(bot);
+    
     let game_id = new_game.id.clone();
     {
         let mut games = state.games.lock().unwrap();
         games.insert(game_id.clone(), new_game);
     }
+
     Json(json!({ "status": "created", "game_id": game_id }))
 }
 
-async fn ws_handler(ws: WebSocketUpgrade, Path(game_id): Path<String>, State(state): State<AppState>) -> impl IntoResponse {
+async fn ws_handler(
+    ws: WebSocketUpgrade, 
+    Path(game_id): Path<String>, 
+    State(state): State<AppState>
+) -> impl IntoResponse {
     let exists = state.games.lock().unwrap().contains_key(&game_id);
     if !exists { return "Game not found".into_response(); }
     
@@ -76,41 +91,44 @@ async fn ws_handler(ws: WebSocketUpgrade, Path(game_id): Path<String>, State(sta
 
 async fn handle_game_socket(mut socket: WebSocket, game_id: String, state: AppState) {
     let my_id = "User".to_string(); 
+
+    // 1. Initial Handshake: Send the user their own board layout
     let init_msg = {
         let games = state.games.lock().unwrap();
-        if let Some(game) = games.get(&game_id) {
-            Some(json!({ "type": "init", "board": game.player_1.board }).to_string())
-        } else { None }
+        games.get(&game_id).map(|g| json!({ "type": "init", "board": g.player_1.board }).to_string())
     };
     if let Some(msg) = init_msg { let _ = socket.send(Message::Text(msg)).await; }
     
+    // 2. Main Game Loop
     while let Some(Ok(msg)) = socket.recv().await {
         if let Message::Text(text) = msg {
+            // Parse coordinates from "row,col" format
             let parts: Vec<&str> = text.split(',').collect();
             if parts.len() != 2 { continue; }
+            
             let r: usize = parts[0].parse().unwrap_or(0);
             let c: usize = parts[1].parse().unwrap_or(0);
+            
             let response = {
                 let mut games = state.games.lock().unwrap();
                 if let Some(game) = games.get_mut(&game_id) {
+                    
+                    // --- PHASE 1: User's Turn ---
                     match game.make_move(my_id.clone(), (r, c)) {
                         Ok((user_res, winner)) => {
                             let mut bot_data = None;
+
+                            // --- PHASE 2: Bot's Turn (if User didn't just win) ---
                             if winner.is_none() {
-                                let bot_move_coords = if let Some(bot_player) = game.player_2.as_mut() {
-                                    Some(bot_player.get_bot_move())
-                                } else {
-                                    None
-                                };
-                                if let Some((bot_r, bot_c)) = bot_move_coords {
-                                    match game.make_move("Bot".to_string(), (bot_r, bot_c)) {
-                                        Ok((b_res, b_win)) => {
-                                            if let Some(bot_player) = game.player_2.as_mut() {
-                                                bot_player.process_bot_move_result((bot_r, bot_c), b_res);
-                                            }
-                                            bot_data = Some((bot_r, bot_c, b_res, b_win));
-                                        },
-                                        Err(_) => {} 
+                                if let Some(bot_player) = game.player_2.as_mut() {
+                                    let (bot_r, bot_c) = bot_player.get_bot_move();
+                                    
+                                    if let Ok((b_res, b_win)) = game.make_move("Bot".to_string(), (bot_r, bot_c)) {
+                                        // Update bot's AI state based on the result
+                                        if let Some(bp) = game.player_2.as_mut() {
+                                            bp.process_bot_move_result((bot_r, bot_c), b_res);
+                                        }
+                                        bot_data = Some((bot_r, bot_c, b_res, b_win));
                                     }
                                 }
                             }
@@ -125,17 +143,11 @@ async fn handle_game_socket(mut socket: WebSocket, game_id: String, state: AppSt
                                 }
                             }))
                         },
-                        Err(e) => {
-                            Some(json!({
-                                "status": "error",
-                                "message": e
-                            }))
-                        }
+                        Err(e) => Some(json!({ "status": "error", "message": e }))
                     }
-                } else {
-                    None 
-                }
+                } else { None }
             };
+
             if let Some(resp) = response {
                 let _ = socket.send(Message::Text(resp.to_string())).await;
             }

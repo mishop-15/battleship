@@ -16,12 +16,14 @@ pub enum CellState {
     Miss,
     Ship,
 }
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Difficulty {
     Easy,
     Medium,
     Hard
 }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BotState {
     pub difficulty: Difficulty,
@@ -29,6 +31,7 @@ pub struct BotState {
     pub last_hit: Option<(usize, usize)>,
     pub target_queue: VecDeque<(usize, usize)>,
 }
+
 impl BotState {
     pub fn new(difficulty: Difficulty) -> Self {
         Self {
@@ -61,22 +64,20 @@ pub struct Player {
 
 impl Player {
     pub fn new(id: String, is_bot: bool, difficulty: Difficulty) -> Self {
-        let bot_state = if is_bot {
-            Some(BotState::new(difficulty)) 
-        } else {
-            None
-        };
+        let bot_state = if is_bot { Some(BotState::new(difficulty)) } else { None };
         let mut player = Self { 
             id, 
             is_bot, 
             board: [[CellState::Empty; 10]; 10], 
             ships: Vec::new(),
-            remaining_health: 17,
+            remaining_health: 17, 
             bot_state,
         };
         player.place_random_ships();
         player
     }
+
+    /// BOT LOGIC: Decides where to fire based on difficulty and previous hits
     pub fn get_bot_move(&mut self) -> (usize, usize) {
         if let Some(state) = &mut self.bot_state {
             while let Some(target) = state.target_queue.pop_front() {
@@ -91,60 +92,31 @@ impl Player {
                 let c = rng.gen_range(0..10);
 
                 if !state.shots_fired.contains(&(r, c)) {
-                    match state.difficulty {
-                        Difficulty::Easy => {
-                            state.shots_fired.insert((r, c));
-                            return (r, c);
-                        },
-                        Difficulty::Medium => {
-                            state.shots_fired.insert((r, c));
-                            return (r, c);
-                        },
-                        Difficulty::Hard => {
-                            if (r + c) % 2 == 0 {
-                                state.shots_fired.insert((r, c));
-                                return (r, c);
-                            }
-                        }
+                    if state.difficulty == Difficulty::Hard && (r + c) % 2 != 0 {
+                        continue; 
                     }
+                    state.shots_fired.insert((r, c));
+                    return (r, c);
                 }
             }
-        } else {
-            (0, 0)
         }
+        (0, 0)
     }
 
     pub fn process_bot_move_result(&mut self, coords: (usize, usize), result: CellState) {
         if let Some(state) = &mut self.bot_state {
             if state.difficulty != Difficulty::Easy && result == CellState::Hit {
                 let (r, c) = coords;
-                let mut is_horizontal = false;
-                let mut is_vertical = false;
-                if let Some((lr, lc)) = state.last_hit {
-                    let dr = (r as isize - lr as isize).abs();
-                    let dc = (c as isize - lc as isize).abs();
-                    if dr + dc == 1 {
-                        if r == lr { is_horizontal = true; } 
-                        if c == lc { is_vertical = true; }   
-                    }
-                }
-                if is_horizontal {
-                    state.target_queue.retain(|&(qr, _)| qr == r);
-                } else if is_vertical {
-                    state.target_queue.retain(|&(_, qc)| qc == c);
-                }
                 state.last_hit = Some(coords);
-                let mut moves = Vec::new();
-                if r > 0 { moves.push((r - 1, c)); } 
-                if r < 9 { moves.push((r + 1, c)); } 
-                if c > 0 { moves.push((r, c - 1)); } 
-                if c < 9 { moves.push((r, c + 1)); } 
+                let adj = [(r as isize - 1, c as isize), (r as isize + 1, c as isize), 
+                           (r as isize, c as isize - 1), (r as isize, c as isize + 1)];
 
-                for m in moves {
-                    if !state.shots_fired.contains(&m) {
-                        if is_horizontal && m.0 != r { continue; }
-                        if is_vertical && m.1 != c { continue; }
-                        state.target_queue.push_front(m);
+                for (ar, ac) in adj {
+                    if ar >= 0 && ar < 10 && ac >= 0 && ac < 10 {
+                        let target = (ar as usize, ac as usize);
+                        if !state.shots_fired.contains(&target) {
+                            state.target_queue.push_back(target);
+                        }
                     }
                 }
             }
@@ -154,21 +126,12 @@ impl Player {
     pub fn place_random_ships(&mut self) {
         let ship_sizes = [5, 4, 3, 3, 2];
         let mut rng = rand::thread_rng();
-
         for (i, &len) in ship_sizes.iter().enumerate() {
             loop {
                 let dir = if rng.gen_bool(0.5) { Direction::Horizontal } else { Direction::Vertical };
                 let row = rng.gen_range(0..10);
                 let col = rng.gen_range(0..10);
-
-                let temp_ship = Ship {
-                    id: format!("ship_{}", i),
-                    len,
-                    hits: 0,
-                    coordinates: (row, col),
-                    dir,
-                };
-                if self.place_ship(temp_ship).is_ok() {
+                if self.place_ship(Ship { id: format!("ship_{}", i), len, hits: 0, coordinates: (row, col), dir }).is_ok() {
                     break;
                 }
             }
@@ -182,12 +145,8 @@ impl Player {
                 Direction::Horizontal => (start_row, start_col + i),
                 Direction::Vertical => (start_row + i, start_col), 
             };
-            
-            if r >= 10 || c >= 10 {
-                return Err("Ship goes out of bounds.".to_string());
-            }
-            if self.board[r][c] != CellState::Empty {
-                return Err(format!("Collision at {},{}", r, c));
+            if r >= 10 || c >= 10 || self.board[r][c] != CellState::Empty {
+                return Err("Placement error".to_string());
             }
         }
         for i in 0..len {
@@ -203,32 +162,21 @@ impl Player {
 
     pub fn receive_shot(&mut self, coord: (usize, usize)) -> Result<CellState, String> {
         let (r, c) = coord;
-        if r >= 10 || c >= 10 {
-            return Err("shot out of bounds".to_string());
-        }
         match self.board[r][c] {
-            CellState::Empty => {
-                self.board[r][c] = CellState::Miss;
-                Ok(CellState::Miss)
-            }
-            CellState::Ship => {
-                self.board[r][c] = CellState::Hit;
+            CellState::Empty => { self.board[r][c] = CellState::Miss; Ok(CellState::Miss) }
+            CellState::Ship => { 
+                self.board[r][c] = CellState::Hit; 
                 self.remaining_health -= 1; 
-                Ok(CellState::Hit)
+                Ok(CellState::Hit) 
             }
-            CellState::Hit | CellState::Miss => {
-                Err("already fired here!".to_string())
-            }
+            _ => Err("Already fired here".to_string())
         }   
     }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum GameStatus {
-    Waiting,   
-    Playing,    
-    Finished,    
-}
+pub enum GameStatus { Waiting, Playing, Finished }
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Game {
     pub id: String,
@@ -241,29 +189,24 @@ pub struct Game {
 
 impl Game {
     pub fn new(player_1: Player) -> Self {
-        let first_turn = player_1.id.clone();
+        let tid = player_1.id.clone();
         Self { 
             id: Uuid::new_v4().to_string(), 
             status: GameStatus::Waiting, 
             player_1, 
             player_2: None, 
-            current_turn: first_turn, 
+            current_turn: tid, 
             winner: None 
         }
     }
-
     pub fn join_game(&mut self, player_2: Player) -> Result<(), String> {
-        if self.player_2.is_none() {
-            self.player_2 = Some(player_2);
-            self.status = GameStatus::Playing;
-            Ok(())
-        } else {
-            Err("game full".to_string())
-        }
+        self.player_2 = Some(player_2);
+        self.status = GameStatus::Playing;
+        Ok(())
     }
     pub fn make_move(&mut self, player_id: String, target: (usize, usize)) -> Result<(CellState, Option<String>), String> {
         let opponent = if player_id == self.player_1.id {
-             self.player_2.as_mut().ok_or("Player 2 missing")?
+             self.player_2.as_mut().ok_or("No opponent")?
         } else {
              &mut self.player_1
         };
