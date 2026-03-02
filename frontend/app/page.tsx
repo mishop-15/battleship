@@ -28,10 +28,8 @@ interface WSMessage {
 
 const GRID_SIZE = 10;
 const WIN_THRESHOLD = 7;
-const HTTP_URL =
-  process.env.NEXT_PUBLIC_BACKEND_HTTP || "http://localhost:3000";
-const WS_URL =
-  process.env.NEXT_PUBLIC_BACKEND_WS || "ws://localhost:3000";
+const HTTP_URL =process.env.NEXT_PUBLIC_BACKEND_HTTP || "http://localhost:3000";
+const WS_URL = process.env.NEXT_PUBLIC_BACKEND_WS || "ws://localhost:3000";
 
 const createEmptyBoard = (): CellState[][] =>
   Array.from({ length: GRID_SIZE }, () => Array(GRID_SIZE).fill("Empty"));
@@ -54,11 +52,7 @@ export default function GamePage() {
   }, []);
 
   const updateGrid = (
-    setBoard: React.Dispatch<React.SetStateAction<CellState[][]>>,
-    row: number,
-    col: number,
-    result: CellState
-  ) => {
+    setBoard: React.Dispatch<React.SetStateAction<CellState[][]>>,row: number,col: number,result: CellState) => {
     setBoard((prev) => {
       const newBoard = prev.map((r) => [...r]);
       newBoard[row][col] = result;

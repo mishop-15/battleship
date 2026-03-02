@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use tower_http::cors::{Any, CorsLayer};
 
 mod models;
-use models::{Game, Player, Difficulty};
+use models::{Game, Player, Difficulty, GameStatus};
 
 type GameStore = Arc<Mutex<HashMap<String, Game>>>;
 
@@ -55,7 +55,6 @@ async fn create_game_handler(
     State(state): State<AppState>, 
     Json(payload): Json<CreateGameRequest>,
 ) -> Json<Value> {
-    // Defaulting to "Easy" as requested
     let diff_str = payload.difficulty.unwrap_or_else(|| "Easy".to_string());
     let difficulty = match diff_str.as_str() {
         "Medium" => Difficulty::Medium,
@@ -63,12 +62,10 @@ async fn create_game_handler(
         _ => Difficulty::Easy,
     };
 
-    let player_1 = Player::new("User".to_string(), false, Difficulty::Easy);
-    let bot = Player::new("Bot".to_string(), true, difficulty);
+    let player_user = Player::new("User".to_string(), false, Difficulty::Easy);
+    let player_bot = Player::new("Bot".to_string(), true, difficulty);
     
-    let mut new_game = Game::new(player_1);
-    let _ = new_game.join_game(bot);
-    
+    let new_game = Game::new(player_user, player_bot);
     let game_id = new_game.id.clone();
     {
         let mut games = state.games.lock().unwrap();
@@ -90,19 +87,16 @@ async fn ws_handler(
 }
 
 async fn handle_game_socket(mut socket: WebSocket, game_id: String, state: AppState) {
-    let my_id = "User".to_string(); 
-
-    // 1. Initial Handshake: Send the user their own board layout
     let init_msg = {
         let games = state.games.lock().unwrap();
-        games.get(&game_id).map(|g| json!({ "type": "init", "board": g.player_1.board }).to_string())
+        games.get(&game_id).map(|g| json!({ "type": "init", "board": g.player.board }).to_string())
     };
     if let Some(msg) = init_msg { let _ = socket.send(Message::Text(msg)).await; }
     
-    // 2. Main Game Loop
+    
     while let Some(Ok(msg)) = socket.recv().await {
         if let Message::Text(text) = msg {
-            // Parse coordinates from "row,col" format
+            
             let parts: Vec<&str> = text.split(',').collect();
             if parts.len() != 2 { continue; }
             
@@ -112,24 +106,18 @@ async fn handle_game_socket(mut socket: WebSocket, game_id: String, state: AppSt
             let response = {
                 let mut games = state.games.lock().unwrap();
                 if let Some(game) = games.get_mut(&game_id) {
-                    
-                    // --- PHASE 1: User's Turn ---
-                    match game.make_move(my_id.clone(), (r, c)) {
-                        Ok((user_res, winner)) => {
+                    if game.status == GameStatus::Finished {
+                        return;
+                    }
+                    match game.make_move(true, (r, c)) {
+                        Ok((user_res, user_winner)) => {
                             let mut bot_data = None;
-
-                            // --- PHASE 2: Bot's Turn (if User didn't just win) ---
-                            if winner.is_none() {
-                                if let Some(bot_player) = game.player_2.as_mut() {
-                                    let (bot_r, bot_c) = bot_player.get_bot_move();
-                                    
-                                    if let Ok((b_res, b_win)) = game.make_move("Bot".to_string(), (bot_r, bot_c)) {
-                                        // Update bot's AI state based on the result
-                                        if let Some(bp) = game.player_2.as_mut() {
-                                            bp.process_bot_move_result((bot_r, bot_c), b_res);
-                                        }
-                                        bot_data = Some((bot_r, bot_c, b_res, b_win));
-                                    }
+                            if user_winner.is_none() {
+                                let (bot_r, bot_c) = game.bot.get_bot_move();
+                                
+                                if let Ok((b_res, b_win)) = game.make_move(false, (bot_r, bot_c)) {
+                                    game.bot.process_bot_move_result((bot_r, bot_c), b_res);
+                                    bot_data = Some((bot_r, bot_c, b_res, b_win));
                                 }
                             }
                             Some(json!({
@@ -139,7 +127,7 @@ async fn handle_game_socket(mut socket: WebSocket, game_id: String, state: AppSt
                                     "bot": bot_data.as_ref().map(|(br, bc, bres, _)| {
                                         json!({ "row": br, "col": bc, "result": bres })
                                     }),
-                                    "winner": winner.or(bot_data.and_then(|(_,_,_,w)| w))
+                                    "winner": user_winner.or(bot_data.and_then(|(_,_,_,w)| w))
                                 }
                             }))
                         },

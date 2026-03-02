@@ -175,48 +175,43 @@ impl Player {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub enum GameStatus { Waiting, Playing, Finished }
+pub enum GameStatus { Playing, Finished }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Game {
     pub id: String,
     pub status: GameStatus,
-    pub player_1: Player,
-    pub player_2: Option<Player>, 
-    pub current_turn: String,      
+    pub player: Player,
+    pub bot: Player, 
+    //pub current_turn: String,
     pub winner: Option<String>,   
 }
 
 impl Game {
-    pub fn new(player_1: Player) -> Self {
-        let tid = player_1.id.clone();
+    pub fn new(player: Player, bot: Player) -> Self {
         Self { 
             id: Uuid::new_v4().to_string(), 
-            status: GameStatus::Waiting, 
-            player_1, 
-            player_2: None, 
-            current_turn: tid, 
+            status: GameStatus::Playing, 
+            player, 
+            bot,  
             winner: None 
         }
     }
-    pub fn join_game(&mut self, player_2: Player) -> Result<(), String> {
-        self.player_2 = Some(player_2);
-        self.status = GameStatus::Playing;
-        Ok(())
-    }
-    pub fn make_move(&mut self, player_id: String, target: (usize, usize)) -> Result<(CellState, Option<String>), String> {
-        let opponent = if player_id == self.player_1.id {
-             self.player_2.as_mut().ok_or("No opponent")?
-        } else {
-             &mut self.player_1
-        };
-        let result = opponent.receive_shot(target)?;
-        let hits_made = 17 - opponent.remaining_health;
-        if hits_made >= 7 {
-            self.status = GameStatus::Finished;
-            self.winner = Some(player_id.clone());
-            return Ok((result, Some(player_id)));
+    pub fn make_move(&mut self, is_player_attacking: bool, target: (usize, usize)) -> Result<(CellState, Option<String>), String> {
+        if self.status == GameStatus::Finished {
+            return Err("game already finsihed".to_string());
         }
+        let opponent = if is_player_attacking { &mut self.bot } else { &mut self.player };
+        
+        let result = opponent.receive_shot(target)?;
+        let hits_landed = 17 - opponent.remaining_health;
+        if hits_landed >= 7 {
+            self.status = GameStatus::Finished;
+            let winner_id = if is_player_attacking { self.player.id.clone() } else { self.bot.id.clone() };
+            self.winner = Some(winner_id.clone());
+            return Ok((result, Some(winner_id)));
+        }
+        
         Ok((result, None))
     }
 }
